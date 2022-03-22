@@ -215,8 +215,7 @@ class Typer:
 
 
 def get_group(typer_instance: Typer) -> click.Command:
-    group = get_group_from_info(TyperInfo(typer_instance))
-    return group
+    return get_group_from_info(TyperInfo(typer_instance))
 
 
 def get_command(typer_instance: Typer) -> click.Command:
@@ -249,8 +248,9 @@ def get_group_name(typer_info: TyperInfo) -> Optional[str]:
         # Priority 1: Callback passed in app.add_typer()
         return get_command_name(typer_info.callback.__name__)
     if typer_info.typer_instance:
-        registered_callback = typer_info.typer_instance.registered_callback
-        if registered_callback:
+        if (
+            registered_callback := typer_info.typer_instance.registered_callback
+        ):
             if registered_callback.callback:
                 # Priority 2: Callback passed in @subapp.callback()
                 return get_command_name(registered_callback.callback.__name__)
@@ -279,15 +279,13 @@ def solve_typer_info_help(typer_info: TyperInfo) -> str:
         pass
     # Priority 4: Implicit inference from callback docstring in app.add_typer()
     if typer_info.callback:
-        doc = inspect.getdoc(typer_info.callback)
-        if doc:
+        if doc := inspect.getdoc(typer_info.callback):
             return doc
     # Priority 5: Implicit inference from callback docstring in @app.callback()
     try:
         callback = typer_info.typer_instance.registered_callback.callback
         if not isinstance(callback, DefaultPlaceholder):
-            doc = inspect.getdoc(callback or "")
-            if doc:
+            if doc := inspect.getdoc(callback or ""):
                 return doc
     except AttributeError:
         pass
@@ -295,8 +293,7 @@ def solve_typer_info_help(typer_info: TyperInfo) -> str:
     try:
         instance_callback = typer_info.typer_instance.info.callback
         if not isinstance(instance_callback, DefaultPlaceholder):
-            doc = inspect.getdoc(instance_callback)
-            if doc:
+            if doc := inspect.getdoc(instance_callback):
                 return doc
     except AttributeError:
         pass
@@ -360,7 +357,7 @@ def get_group_from_info(group_info: TyperInfo) -> click.Command:
         context_param_name,
     ) = get_params_convertors_ctx_param_name_from_function(solved_info.callback)
     cls = solved_info.cls or TyperGroup
-    group = cls(  # type: ignore
+    return cls(  # type: ignore
         name=solved_info.name or "",
         commands=commands,
         invoke_without_command=solved_info.invoke_without_command,
@@ -384,7 +381,6 @@ def get_group_from_info(group_info: TyperInfo) -> click.Command:
         hidden=solved_info.hidden,
         deprecated=solved_info.deprecated,
     )
-    return group
 
 
 def get_command_name(name: str) -> str:
@@ -424,7 +420,7 @@ def get_command_from_info(command_info: CommandInfo) -> click.Command:
         context_param_name,
     ) = get_params_convertors_ctx_param_name_from_function(command_info.callback)
     cls = command_info.cls or TyperCommand
-    command = cls(
+    return cls(
         name=name,
         context_settings=command_info.context_settings,
         callback=get_callback(
@@ -443,13 +439,10 @@ def get_command_from_info(command_info: CommandInfo) -> click.Command:
         hidden=command_info.hidden,
         deprecated=command_info.deprecated,
     )
-    return command
 
 
 def param_path_convertor(value: Optional[str] = None) -> Optional[Path]:
-    if value is not None:
-        return Path(value)
-    return None
+    return Path(value) if value is not None else None
 
 
 def generate_enum_convertor(enum: Type[Enum]) -> Callable[..., Any]:
@@ -491,10 +484,7 @@ def get_callback(
 
     def wrapper(**kwargs: Any) -> Any:
         for k, v in kwargs.items():
-            if k in convertors:
-                use_params[k] = convertors[k](v)
-            else:
-                use_params[k] = v
+            use_params[k] = convertors[k](v) if k in convertors else v
         if context_param_name:
             use_params[context_param_name] = click.get_current_context()
         return callback(**use_params)  # type: ignore
@@ -509,16 +499,11 @@ def get_click_type(
     if annotation == str:
         return click.STRING
     elif annotation == int:
-        if parameter_info.min is not None or parameter_info.max is not None:
-            min_ = None
-            max_ = None
-            if parameter_info.min is not None:
-                min_ = int(parameter_info.min)
-            if parameter_info.max is not None:
-                max_ = int(parameter_info.max)
-            return click.IntRange(min=min_, max=max_, clamp=parameter_info.clamp)
-        else:
+        if parameter_info.min is None and parameter_info.max is None:
             return click.INT
+        min_ = int(parameter_info.min) if parameter_info.min is not None else None
+        max_ = int(parameter_info.max) if parameter_info.max is not None else None
+        return click.IntRange(min=min_, max=max_, clamp=parameter_info.clamp)
     elif annotation == float:
         if parameter_info.min is not None or parameter_info.max is not None:
             return click.FloatRange(
@@ -611,17 +596,14 @@ def get_click_param(
             required = True
         else:
             default_value = parameter_info.default
-    elif param.default == Required or param.default == param.empty:
+    elif param.default in [Required, param.empty]:
         required = True
         parameter_info = ArgumentInfo()
     else:
         default_value = param.default
         parameter_info = OptionInfo()
     annotation: Any = Any
-    if not param.annotation == param.empty:
-        annotation = param.annotation
-    else:
-        annotation = str
+    annotation = param.annotation if param.annotation != param.empty else str
     main_type = annotation
     is_list = False
     parameter_type: Any = None
@@ -630,11 +612,7 @@ def get_click_param(
     if origin is not None:
         # Handle Optional[SomeType]
         if origin is Union:
-            types = []
-            for type_ in main_type.__args__:
-                if type_ is NoneType:
-                    continue
-                types.append(type_)
+            types = [type_ for type_ in main_type.__args__ if type_ is not NoneType]
             assert len(types) == 1, "Typer Currently doesn't support Union types"
             main_type = types[0]
             origin = getattr(main_type, "__origin__", None)
@@ -668,7 +646,7 @@ def get_click_param(
         convertor = generate_iter_convertor(convertor)
         # TODO: handle recursive conversion for tuples
     if isinstance(parameter_info, OptionInfo):
-        if main_type is bool and not (parameter_info.is_flag is False):
+        if main_type is bool and parameter_info.is_flag is not False:
             is_flag = True
             # Click doesn't accept a flag of type bool, only None, and then it sets it
             # to bool internally
@@ -721,9 +699,7 @@ def get_click_param(
         )
     elif isinstance(parameter_info, ArgumentInfo):
         param_decls = [param.name]
-        nargs = None
-        if is_list:
-            nargs = -1
+        nargs = -1 if is_list else None
         return (
             TyperArgument(
                 # Argument
@@ -794,10 +770,7 @@ def get_param_callback(
         if click_param_name:
             use_params[click_param_name] = param
         if value_name:
-            if convertor:
-                use_value = convertor(value)
-            else:
-                use_value = value
+            use_value = convertor(value) if convertor else value
             use_params[value_name] = use_value
         return callback(**use_params)  # type: ignore
 
